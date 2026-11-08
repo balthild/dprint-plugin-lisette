@@ -19,7 +19,7 @@ impl SyncPluginHandler<Configuration> for LisettePluginHandler {
 			name: package.to_string(),
 			version: version.to_string(),
 			config_key: "lisette".to_string(),
-			help_url: "".to_string(),
+			help_url: format!("https://github.com/{repo}"),
 			config_schema_url: format!("https://plugins.dprint.dev/{repo}/{version}/schema.json",),
 			update_url: Some(format!("https://plugins.dprint.dev/{repo}/latest.json")),
 			supports_range_formatting: None,
@@ -32,12 +32,14 @@ impl SyncPluginHandler<Configuration> for LisettePluginHandler {
 
 	fn resolve_config(
 		&mut self,
-		_config: ConfigKeyMap,
-		_global_config: &GlobalConfiguration,
+		config: ConfigKeyMap,
+		global_config: &GlobalConfiguration,
 	) -> PluginResolveConfigurationResult<Configuration> {
+		let resolved = crate::config::resolve_config(config, global_config);
+
 		PluginResolveConfigurationResult {
-			config: Configuration {},
-			diagnostics: vec![],
+			config: resolved.config,
+			diagnostics: resolved.diagnostics,
 			file_matching: FileMatchingInfo {
 				file_extensions: vec!["lis".to_string()],
 				file_names: vec![],
@@ -55,11 +57,21 @@ impl SyncPluginHandler<Configuration> for LisettePluginHandler {
 
 	fn format(
 		&mut self,
-		_request: SyncFormatRequest<Configuration>,
+		request: SyncFormatRequest<Configuration>,
 		mut _format_with_host: impl FnMut(SyncHostFormatRequest) -> FormatResult,
 	) -> FormatResult {
-		// TODO: format through the dprint-core IR once the generator exists.
-		Ok(None)
+		let text = String::from_utf8(request.file_bytes)?;
+
+		crate::format_text::format_text(&text, request.config, Some(request.arena_pool))
+			.map(|formatted| formatted.map(String::into_bytes))
+			.map_err(|errors| -> FormatError {
+				errors
+					.into_iter()
+					.map(|error| error.message)
+					.collect::<Vec<String>>()
+					.join("\n")
+					.into()
+			})
 	}
 }
 

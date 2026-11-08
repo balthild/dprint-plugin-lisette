@@ -5,7 +5,7 @@ use lisette_syntax::lex::Lexer;
 use lisette_syntax::parse::{IMPORT_AFTER_ITEM_CODE, Parser};
 
 use crate::config::Configuration;
-use crate::generation::Context;
+use crate::generation::{Comments, Context};
 
 /// Returns `None` when the text is already formatted.
 pub fn format_text(
@@ -18,7 +18,13 @@ pub fn format_text(
 		return Err(lexed.errors);
 	}
 
+	let arena = match arena_pool {
+		Some(arena_pool) => arena_pool.create_arena(),
+		None => Arena::new(),
+	};
+	let comments = Comments::from_lexed(&arena, &lexed.tokens, lexed.blank_lines, text);
 	let parsed = Parser::new(lexed.tokens, text).parse();
+
 	let only_recovered_imports = parsed
 		.errors
 		.iter()
@@ -27,12 +33,8 @@ pub fn format_text(
 		return Err(parsed.errors);
 	}
 
-	let arena = match arena_pool {
-		Some(arena_pool) => arena_pool.create_arena(),
-		None => Arena::new(),
-	};
-	let context = Context::new(&arena, text);
-	let print_items = context.generate(&parsed.ast);
+	let mut context = Context::new(&arena, text, comments);
+	let print_items = context.package(&parsed.ast);
 	let output = print(print_items, print_options(text, config));
 
 	if output == text {

@@ -27,6 +27,7 @@ impl Event<'_> {
 pub(crate) struct Split<'a> {
 	pub(crate) trailing: Option<PrintItems<'a>>,
 	pub(crate) leading: Option<PrintItems<'a>>,
+	pub(crate) has_blank_before_leading: bool,
 }
 
 pub(crate) struct Comments<'a> {
@@ -142,6 +143,7 @@ impl<'a> Comments<'a> {
 		Split {
 			trailing: self.to_items(trailing),
 			leading: self.to_items(leading),
+			has_blank_before_leading: matches!(leading.first(), Some(Event::BlankLine(_))),
 		}
 	}
 

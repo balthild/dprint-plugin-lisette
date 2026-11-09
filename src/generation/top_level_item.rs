@@ -166,8 +166,7 @@ impl<'a> Context<'a> {
 				}
 				if let ConstInitializer::Value(value) = expression {
 					items.push_str(" = ");
-					items.extend(self.verbatim(value.get_span().byte_offset, value.get_span().end()));
-					self.comments.mark_handled_before(value.get_span().end());
+					items.extend(self.expression(value));
 				}
 				items
 			}
@@ -230,14 +229,8 @@ impl<'a> Context<'a> {
 		}
 
 		if let Some(body) = body.definition() {
-			let span = body.get_span();
-			if let Some(leading) = self.comments.take_comments_before(span.byte_offset) {
-				items.push_space();
-				items.extend(leading);
-			}
-			items.push_space();
-			items.extend(self.verbatim(span.byte_offset, span.end()));
-			self.comments.mark_handled_before(span.end());
+			items.push_str(" ");
+			items.extend(self.expression(body));
 		}
 
 		items
@@ -252,7 +245,7 @@ impl<'a> Context<'a> {
 		)
 	}
 
-	fn binding(&mut self, binding: &'a Binding) -> PrintItems<'a> {
+	pub(crate) fn binding(&mut self, binding: &'a Binding) -> PrintItems<'a> {
 		let mut items = PrintItems::new(self.arena);
 
 		if binding.is_mutable() {

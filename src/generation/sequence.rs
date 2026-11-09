@@ -53,6 +53,17 @@ impl ListOptions {
 			force_use_new_lines: false,
 		}
 	}
+
+	/// A lambda's parameter list: `|a, b|`.
+	pub(crate) fn pipes() -> Self {
+		Self {
+			open: "|",
+			close: "|",
+			spaces_inside: false,
+			trailing_comma: false,
+			force_use_new_lines: false,
+		}
+	}
 }
 
 impl<'a> Context<'a> {
@@ -66,7 +77,21 @@ impl<'a> Context<'a> {
 		values: &'a [T],
 		options: ListOptions,
 		start_of: impl Fn(&T) -> u32,
+		format: impl FnMut(&mut Self, &'a T) -> Option<PrintItemPath<'a>>,
+	) -> PrintItems<'a> {
+		self.list_with_hug(values, options, start_of, format, |_, _| false)
+	}
+
+	/// `hug` marks a value whose own line breaks should not force the whole list onto
+	/// several lines, so a lambda or an object literal as the last argument stays beside
+	/// the call it is passed to.
+	pub(crate) fn list_with_hug<T>(
+		&mut self,
+		values: &'a [T],
+		options: ListOptions,
+		start_of: impl Fn(&T) -> u32,
 		mut format: impl FnMut(&mut Self, &'a T) -> Option<PrintItemPath<'a>>,
+		hug: impl Fn(usize, &T) -> bool,
 	) -> PrintItems<'a> {
 		let arena = self.arena;
 		let indent_width = self.config.indent_width;
@@ -109,7 +134,13 @@ impl<'a> Context<'a> {
 						items.push_str(",");
 					}
 
-					generated.push(ir_helpers::GeneratedValue::from_items(items));
+					generated.push(ir_helpers::GeneratedValue {
+						items,
+						lines_span: None,
+						allow_inline_multi_line: hug(index, value),
+						allow_inline_single_line: index == last,
+						is_known_multi_line: false,
+					});
 				}
 
 				generated

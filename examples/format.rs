@@ -37,11 +37,6 @@ fn main() -> ExitCode {
 		}
 	};
 
-	if let Some(problem) = stability_problem(&formatted, &resolved.config) {
-		eprintln!("warning: {problem}");
-		return ExitCode::FAILURE;
-	}
-
 	if write {
 		if changed {
 			if let Err(error) = std::fs::write(&path, &*formatted) {
@@ -59,7 +54,13 @@ fn main() -> ExitCode {
 		print!("{formatted}");
 	}
 
-	ExitCode::SUCCESS
+	match stability_problem(&formatted, &resolved.config) {
+		Some(problem) => {
+			eprintln!("warning: {problem}");
+			ExitCode::FAILURE
+		}
+		None => ExitCode::SUCCESS,
+	}
 }
 
 fn stability_problem(text: &str, config: &Configuration) -> Option<String> {

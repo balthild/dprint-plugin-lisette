@@ -33,7 +33,7 @@ pub fn format_text(
 		return Err(parsed.errors);
 	}
 
-	let mut context = Context::new(&arena, text, comments);
+	let mut context = Context::new(&arena, text, config, comments);
 	let print_items = context.package(&parsed.ast);
 	let output = print(print_items, print_options(text, config));
 

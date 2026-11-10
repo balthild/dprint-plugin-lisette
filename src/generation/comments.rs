@@ -215,6 +215,21 @@ impl<'a> Comments<'a> {
 		self.doc_cursor += count;
 	}
 
+	/// Whether a comment lies between two positions, asked without consuming anything: a caller
+	/// that must decide how to lay a construct out before it generates it cannot take them yet.
+	pub(crate) fn has_comment_between(&self, from: u32, before: u32) -> bool {
+		if from >= before {
+			return false;
+		}
+
+		let start = self.events.partition_point(|event| event.start() < from);
+
+		matches!(
+			self.events[start..].first(),
+			Some(Event::Comment(comment)) if comment.start < before
+		)
+	}
+
 	/// A blank line between comments is kept as one blank line.
 	fn to_items(&self, events: &[Event<'a>]) -> Option<PrintItems<'a>> {
 		let mut items = PrintItems::new(self.arena);
@@ -378,6 +393,20 @@ mod tests {
 
 		assert_eq!(render(split.header), "// header\n");
 		assert_eq!(render(split.leading), "");
+	}
+
+	#[test]
+	fn reports_a_comment_between_two_positions_without_taking_it() {
+		let source = "let a = 1 // why\nlet b = 2\n";
+		let arena = Arena::new();
+		let mut comments = new_comments(&arena, source);
+		let comment = source.find("//").unwrap() as u32;
+		let next_item = source.find("let b").unwrap() as u32;
+
+		assert!(comments.has_comment_between(comment - 1, next_item));
+		assert!(!comments.has_comment_between(comment - 1, comment));
+		assert!(!comments.has_comment_between(next_item, next_item + 1));
+		assert_eq!(render(comments.take_comments_before(u32::MAX)), "// why\n");
 	}
 
 	#[test]

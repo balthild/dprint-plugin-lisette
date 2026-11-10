@@ -50,7 +50,11 @@ travels with it.
 Comments belong to the author; the formatter only decides where they sit.
 
 - A comment on the same line as the previous item trails it. The first comment that starts
-  a new line, and everything after it, leads the next item.
+  a new line, and everything after it, leads the next item. In a chain of operands this is
+  what keeps an operator together with the operand it belongs to: a comment written after
+  `map(f)` stays on that step's line, and one written above a step goes above the operator.
+- A comment anywhere between two operands forces the whole chain to break. On one line the
+  comment would land between an operator and its operand.
 - A comment detached from the first item of a file by a blank line stays at the top as a
   file header rather than travelling with that item.
 - Two or more blank lines between two items become one. Blank lines inside a comment block
@@ -61,7 +65,7 @@ comment is emitted a second time.
 
 ## Limits of the syntax tree
 
-Some things cannot be formatted because `lisette-syntax` 0.12.5 does not carry them:
+Some things cannot be formatted because `lisette-syntax` 0.13.0 does not carry them:
 
 - **Statement semicolons are dropped.** The parser consumes them with `advance_if`, so
   nothing downstream can know whether one was written. The upstream formatter behaves the

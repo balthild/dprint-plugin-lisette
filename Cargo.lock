@@ -104,9 +104,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "lisette-syntax"
-version = "0.12.5"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "191f59ef1f93f640af2ce4a7c3adc71b0156c3b877fb23a0307472b3649dcac5"
+checksum = "29a2ec193b5778520c0b726e08ff75162955c735ac2d59e4e75973beef91c5d1"
 dependencies = [
  "ecow",
  "rustc-hash",

@@ -8,7 +8,7 @@ crate-type = ["lib", "cdylib"]
 
 [dependencies]
 dprint-core = { version = "0.75.2", features = ["wasm"] }
-lisette-syntax = "=0.12.5"
+lisette-syntax = "=0.13.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 

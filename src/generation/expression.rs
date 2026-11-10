@@ -552,18 +552,45 @@ impl<'a> Context<'a> {
 		let mut operators = Vec::new();
 		collect_binary(expression, &mut operands, &mut operators);
 
+		// A comment between two operands has to break the chain: on one line it would land
+		// between an operator and the operand that operator belongs to.
+		let force_use_new_lines = operands.windows(2).any(|pair| {
+			self
+				.comments
+				.has_comment_between(pair[0].get_span().end(), pair[1].get_span().byte_offset)
+		});
+
 		let last = operands.len() - 1;
 		let result = ir_helpers::gen_separated_values(
 			|_| {
-				let mut generated = Vec::with_capacity(operands.len());
+				let mut generated: Vec<ir_helpers::GeneratedValue<'a>> = Vec::with_capacity(operands.len());
 
 				for (index, operand) in operands.iter().enumerate() {
 					let mut items = PrintItems::new(arena);
+					let mut trailing = None;
+
 					if index > 0 {
+						// A comment on the previous operand's line trails it, and one written
+						// on its own line leads this operand.
+						let split = self.comments.take_split_after_previous(
+							Some(operands[index - 1].get_span().end()),
+							operand.get_span().byte_offset,
+						);
+						trailing = split.trailing;
+
 						items.push_str(operators[index - 1]);
 						items.push_str(" ");
+						items = self.with_leading(split.leading, items);
 					}
+
 					items.extend(self.expression(operand));
+
+					if let Some(trailing) = trailing
+						&& let Some(previous) = generated.last_mut()
+					{
+						previous.items.push_space();
+						previous.items.extend(trailing);
+					}
 
 					generated.push(ir_helpers::GeneratedValue {
 						items,
@@ -578,7 +605,7 @@ impl<'a> Context<'a> {
 			},
 			ir_helpers::GenSeparatedValuesOptions {
 				prefer_hanging: false,
-				force_use_new_lines: false,
+				force_use_new_lines,
 				max_blank_lines: 0,
 				indent_width,
 				single_line_options: ir_helpers::SingleLineOptions::separated_same_line(

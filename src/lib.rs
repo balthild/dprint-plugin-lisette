@@ -2,7 +2,7 @@ pub mod config;
 mod format_text;
 mod generation;
 
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+#[cfg(feature = "plugin")]
 mod plugin;
 
 pub use config::{Configuration, resolve_config};

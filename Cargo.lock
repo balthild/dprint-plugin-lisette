@@ -40,7 +40,6 @@ dependencies = [
  "dprint-core",
  "lisette-syntax",
  "serde",
- "serde_json",
 ]
 
 [[package]]

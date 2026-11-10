@@ -9,14 +9,16 @@ description = "Lisette formatter plugin for dprint."
 repository = "https://github.com/balthild/dprint-plugin-lisette"
 
 [lib]
-name = "plugin"
 crate-type = ["lib", "cdylib"]
 
+[features]
+plugin = ["dprint-core/wasm"]
+tracing = ["dprint-core/tracing"]
+
 [dependencies]
-dprint-core = { version = "0.75.2", features = ["wasm"] }
+dprint-core = "0.75.2"
 lisette-syntax = "=0.13.0"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
 
 [profile.release]
 opt-level = 3

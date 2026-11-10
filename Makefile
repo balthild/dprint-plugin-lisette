@@ -1,13 +1,12 @@
 help:
-	echo "Usage: make [build|check]"
+	echo "Usage: make [build|check|test]"
 
 build:
-	cargo build --release --target=wasm32-unknown-unknown
+	cargo build --release --target=wasm32-unknown-unknown --features=plugin
 
-check: check-lib check-plugin
-
-check-lib:
+check:
 	cargo clippy --all-targets
+	cargo clippy --target=wasm32-unknown-unknown --features=plugin
 
-check-plugin:
-	cargo clippy --target=wasm32-unknown-unknown
+test:
+	cargo test

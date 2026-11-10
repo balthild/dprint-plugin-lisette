@@ -24,6 +24,7 @@ jobs:
       uses: dtolnay/rust-toolchain@nightly
       with:
         targets: wasm32-unknown-unknown
+        components: clippy
 
     - name: Check
       run: make check

@@ -420,6 +420,9 @@ impl<'a> Context<'a> {
 				prefixed_block(self, "recover ", items, *span)
 			}
 
+			// A function or constant is also allowed between the statements of a block.
+			Expression::Function { .. } | Expression::Const { .. } => self.definition(expression),
+
 			other => {
 				let span = other.get_span();
 				self.comments.mark_handled_before(span.end());

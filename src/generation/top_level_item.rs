@@ -174,7 +174,7 @@ impl<'a> Context<'a> {
 		items
 	}
 
-	fn definition(&mut self, item: &'a Expression) -> PrintItems<'a> {
+	pub(crate) fn definition(&mut self, item: &'a Expression) -> PrintItems<'a> {
 		match item {
 			Expression::Function {
 				name,

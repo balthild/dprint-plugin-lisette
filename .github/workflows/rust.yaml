@@ -6,6 +6,8 @@ on:
     - 'src/**'
     - 'Cargo.toml'
     - 'Cargo.lock'
+    - 'Makefile'
+    - '.github/workflows/rust.yaml'
 
 env:
   CARGO_TERM_COLOR: always

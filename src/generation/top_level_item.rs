@@ -95,16 +95,15 @@ impl<'a> Context<'a> {
 				items.push_signal(Signal::NewLine);
 			}
 
-			let mut previous_is_go = None;
+			let mut previous_group = None;
 			for (order, record) in imports {
-				let is_go = !order.0;
-				if let Some(previous) = previous_is_go {
+				if let Some(previous) = previous_group {
 					items.push_signal(Signal::NewLine);
-					if previous != is_go {
+					if previous != order.0 {
 						items.push_signal(Signal::NewLine);
 					}
 				}
-				previous_is_go = Some(is_go);
+				previous_group = Some(order.0);
 
 				if let Some(leading) = record.leading {
 					items.extend(leading);
@@ -652,9 +651,17 @@ struct Record<'a> {
 	body: PrintItems<'a>,
 }
 
-/// Where an import sorts: the go ones first, then by the name it introduces, then by path.
+/// Where an import sorts: its group, then the name it introduces, then its path.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct ImportOrder<'a>(bool, &'a str, &'a str);
+struct ImportOrder<'a>(ImportGroup, &'a str, &'a str);
+
+/// The block an import is sorted into, separated from the others by a blank line.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ImportGroup {
+	GoStdlib,
+	GoThirdParty,
+	Other,
+}
 
 fn import_order(item: &Expression) -> Option<ImportOrder<'_>> {
 	let Expression::PackageImport { name, alias, .. } = item else {
@@ -667,7 +674,21 @@ fn import_order(item: &Expression) -> Option<ImportOrder<'_>> {
 		None => name.split_once(':').map_or(name.as_str(), |(_, path)| path),
 	};
 
-	Some(ImportOrder(!name.starts_with("go:"), key, name))
+	Some(ImportOrder(import_group(name), key, name))
+}
+
+fn import_group(name: &str) -> ImportGroup {
+	match name.strip_prefix("go:") {
+		None => ImportGroup::Other,
+		Some(path) if is_go_module_path(path) => ImportGroup::GoThirdParty,
+		Some(_) => ImportGroup::GoStdlib,
+	}
+}
+
+/// Go tells a module path from a standard library one by the dot in its first element.
+fn is_go_module_path(path: &str) -> bool {
+	let first = path.split('/').next().unwrap_or(path);
+	first.contains('.')
 }
 
 fn item_attributes(item: &Expression) -> &[Attribute] {

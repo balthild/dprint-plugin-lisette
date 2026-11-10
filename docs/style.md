@@ -53,10 +53,12 @@ instead.
 ## Imports
 
 Imports are hoisted to the top of the file and sorted, because their order carries no
-meaning in Lisette. `go:` imports come first, then the rest, with a blank line between the
-two groups. Within a group the sort key is the alias when the import has one (`_` sorts as
-`_`), otherwise the path with its `go:` prefix removed. A comment written above an import
-travels with it.
+meaning in Lisette. They fall into three groups separated by a blank line: packages of the
+Go standard library, Go packages from anywhere else, and the rest. A `go:` path counts as
+the standard library until its first segment contains a dot, which is how Go itself tells a
+module path from a standard library one. Within a group the sort key is the alias when the
+import has one (`_` sorts as `_`), otherwise the path with its `go:` prefix removed. A
+comment written above an import travels with it.
 
 ## Comments
 

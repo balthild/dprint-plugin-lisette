@@ -27,3 +27,7 @@ lto = true
 debug-assertions = false
 overflow-checks = false
 panic = "abort"
+
+[package.metadata.release]
+pre-release-commit-message = "chore: release {{crate_name}} v{{version}}"
+tag-message = "chore: release {{crate_name}} v{{version}}"

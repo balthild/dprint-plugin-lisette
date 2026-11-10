@@ -25,6 +25,7 @@ impl Event<'_> {
 /// The comments before a position, split at the point where the previous item ends:
 /// comments on the previous item's line trail it, the rest lead the next item.
 pub(crate) struct Split<'a> {
+	pub(crate) header: Option<PrintItems<'a>>,
 	pub(crate) trailing: Option<PrintItems<'a>>,
 	pub(crate) leading: Option<PrintItems<'a>>,
 	pub(crate) has_blank_before_leading: bool,
@@ -140,7 +141,21 @@ impl<'a> Comments<'a> {
 		};
 		let (trailing, leading) = events.split_at(split_at);
 
+		// With no previous item, comments detached from the first one by a blank line are a
+		// file header rather than something that travels with it.
+		let (header, leading) = if previous_end.is_none() {
+			let at = leading
+				.iter()
+				.rposition(|event| matches!(event, Event::BlankLine(_)))
+				.map_or(0, |index| index + 1);
+
+			leading.split_at(at)
+		} else {
+			(&[][..], leading)
+		};
+
 		Split {
+			header: self.to_items(header),
 			trailing: self.to_items(trailing),
 			leading: self.to_items(leading),
 			has_blank_before_leading: matches!(leading.first(), Some(Event::BlankLine(_))),

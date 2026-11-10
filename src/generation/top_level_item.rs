@@ -1,7 +1,7 @@
 use dprint_core::formatting::*;
 use lisette_syntax::ast::{
 	Attribute, Binding, ConstInitializer, EnumFieldDefinition, EnumVariant, Expression, FunctionBody,
-	Generic, ParentInterface, StructFieldDefinition, StructFields, VariantFields,
+	Generic, ImportAlias, ParentInterface, StructFieldDefinition, StructFields, VariantFields,
 };
 
 use crate::generation::{Context, ListOptions};
@@ -9,24 +9,14 @@ use crate::generation::{Context, ListOptions};
 impl<'a> Context<'a> {
 	pub(crate) fn package(&mut self, top_level_items: &'a [Expression]) -> PrintItems<'a> {
 		let arena = self.arena;
-		let mut items = PrintItems::new(arena);
-		let mut wrote_any = false;
 
-		if let Some(shebang) = self.comments.take_shebang() {
-			items.push_str_runtime_width_computed(shebang);
-			wrote_any = true;
-		}
-
-		if let Some(file_comments) = self.comments.take_file_comments() {
-			if wrote_any {
-				items.push_signal(Signal::NewLine);
-				items.push_signal(Signal::NewLine);
-			}
-			items.extend(file_comments);
-			wrote_any = true;
-		}
+		let shebang = self.comments.take_shebang();
+		let file_comments = self.comments.take_file_comments();
 
 		let mut previous_end = None;
+		let mut header = None;
+		let mut records: Vec<Record<'a>> = Vec::with_capacity(top_level_items.len());
+
 		for item in top_level_items {
 			let span = item.get_span();
 			let leading_edge = leading_edge(item);
@@ -35,8 +25,99 @@ impl<'a> Context<'a> {
 				.comments
 				.take_split_after_previous(previous_end, leading_edge);
 
+			if let Some(previous) = records.last_mut() {
+				previous.trailing = split.trailing;
+			}
+			if records.is_empty() {
+				header = split.header;
+			}
+
+			let mut body = self.attributes(item);
+			if is_public(item) {
+				body.push_str("pub ");
+			}
+			body.extend(self.definition(item));
+			self.comments.mark_handled_before(span.end());
+
+			records.push(Record {
+				order: import_order(item),
+				doc_comments,
+				leading: split.leading,
+				trailing: None,
+				body,
+			});
+
+			previous_end = Some(span.end());
+		}
+
+		let trailing_comments = self.comments.take_trailing_comments();
+
+		let mut imports = Vec::new();
+		let mut rest = Vec::new();
+		for record in records {
+			match record.order {
+				Some(order) => imports.push((order, record)),
+				None => rest.push(record),
+			}
+		}
+		imports.sort_by_key(|(order, _)| *order);
+
+		let mut items = PrintItems::new(arena);
+		let mut wrote_any = false;
+
+		if let Some(shebang) = shebang {
+			items.push_str_runtime_width_computed(shebang);
+			items.push_signal(Signal::NewLine);
+			wrote_any = true;
+		}
+
+		if let Some(file_comments) = file_comments {
+			items.extend(file_comments);
+			wrote_any = true;
+		}
+
+		if let Some(header) = header {
 			if wrote_any {
-				if let Some(trailing) = split.trailing {
+				items.push_signal(Signal::NewLine);
+				items.push_signal(Signal::NewLine);
+			}
+			items.extend(header);
+			wrote_any = true;
+		}
+
+		if !imports.is_empty() {
+			if wrote_any {
+				items.push_signal(Signal::NewLine);
+				items.push_signal(Signal::NewLine);
+			}
+
+			let mut previous_is_go = None;
+			for (order, record) in imports {
+				let is_go = !order.0;
+				if let Some(previous) = previous_is_go {
+					items.push_signal(Signal::NewLine);
+					if previous != is_go {
+						items.push_signal(Signal::NewLine);
+					}
+				}
+				previous_is_go = Some(is_go);
+
+				if let Some(leading) = record.leading {
+					items.extend(leading);
+					items.push_signal(Signal::NewLine);
+				}
+				items.extend(record.body);
+				if let Some(trailing) = record.trailing {
+					items.push_space();
+					items.extend(trailing);
+				}
+			}
+			wrote_any = true;
+		}
+
+		for record in rest {
+			if wrote_any {
+				if let Some(trailing) = record.trailing {
 					items.push_space();
 					items.extend(trailing);
 				}
@@ -44,26 +125,19 @@ impl<'a> Context<'a> {
 				items.push_signal(Signal::NewLine);
 			}
 
-			if let Some(doc_comments) = doc_comments {
+			if let Some(doc_comments) = record.doc_comments {
 				items.extend(doc_comments);
 				items.push_signal(Signal::NewLine);
 			}
-			if let Some(leading) = split.leading {
+			if let Some(leading) = record.leading {
 				items.extend(leading);
 			}
 
-			items.extend(self.attributes(item));
-			if is_public(item) {
-				items.push_str("pub ");
-			}
-			items.extend(self.definition(item));
-			self.comments.mark_handled_before(span.end());
-
-			previous_end = Some(span.end());
+			items.extend(record.body);
 			wrote_any = true;
 		}
 
-		if let Some(trailing) = self.comments.take_trailing_comments() {
+		if let Some(trailing) = trailing_comments {
 			if wrote_any {
 				items.push_signal(Signal::NewLine);
 				items.push_signal(Signal::NewLine);
@@ -484,6 +558,33 @@ fn leading_edge(item: &Expression) -> u32 {
 		|| item.get_span().byte_offset,
 		|attribute| attribute.span.byte_offset,
 	)
+}
+
+/// What an item was, along with the pieces of the source around it.
+struct Record<'a> {
+	order: Option<ImportOrder<'a>>,
+	doc_comments: Option<PrintItems<'a>>,
+	leading: Option<PrintItems<'a>>,
+	trailing: Option<PrintItems<'a>>,
+	body: PrintItems<'a>,
+}
+
+/// Where an import sorts: the go ones first, then by the name it introduces, then by path.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ImportOrder<'a>(bool, &'a str, &'a str);
+
+fn import_order(item: &Expression) -> Option<ImportOrder<'_>> {
+	let Expression::PackageImport { name, alias, .. } = item else {
+		return None;
+	};
+
+	let key = match alias {
+		Some(ImportAlias::Named(alias, _)) => alias.as_str(),
+		Some(ImportAlias::Blank(_)) => "_",
+		None => name.split_once(':').map_or(name.as_str(), |(_, path)| path),
+	};
+
+	Some(ImportOrder(!name.starts_with("go:"), key, name))
 }
 
 fn item_attributes(item: &Expression) -> &[Attribute] {

@@ -542,15 +542,32 @@ impl<'a> Context<'a> {
 		)
 	}
 
-	/// Breaks before every operator once the chain no longer fits, indenting the
-	/// continuation one level.
+	/// Lays out a chain of operators that all bind equally tightly, breaking before every one of
+	/// them once the chain no longer fits and indenting the continuation one level.
+	///
+	/// The chain stops where an operator binds differently. That sub-expression keeps its own
+	/// group, so the loosest operator is the one that breaks first and the tighter pairs stay
+	/// together while they fit:
+	///
+	/// ```text
+	/// let y = a * b
+	///   + c * d
+	/// ```
+	///
+	/// Flattening across precedence levels instead would put `*` and `+` in one group and break
+	/// every one of them, losing the shape of the expression.
 	fn binary(&mut self, expression: &'a Expression) -> PrintItems<'a> {
 		let arena = self.arena;
 		let indent_width = self.config.indent_width;
 
+		let Expression::Binary { operator, .. } = expression else {
+			unreachable!("binary is only generated for a binary expression")
+		};
+		let precedence = precedence_of(operator);
+
 		let mut operands = Vec::new();
 		let mut operators = Vec::new();
-		collect_binary(expression, &mut operands, &mut operators);
+		collect_chain(expression, precedence, &mut operands, &mut operators);
 
 		// A comment between two operands has to break the chain: on one line it would land
 		// between an operator and the operand that operator belongs to.
@@ -560,7 +577,6 @@ impl<'a> Context<'a> {
 				.has_comment_between(pair[0].get_span().end(), pair[1].get_span().byte_offset)
 		});
 
-		let last = operands.len() - 1;
 		let result = ir_helpers::gen_separated_values(
 			|_| {
 				let mut generated: Vec<ir_helpers::GeneratedValue<'a>> = Vec::with_capacity(operands.len());
@@ -595,7 +611,7 @@ impl<'a> Context<'a> {
 					generated.push(ir_helpers::GeneratedValue {
 						items,
 						lines_span: None,
-						allow_inline_multi_line: index == last,
+						allow_inline_multi_line: wraps_in_place(operand),
 						allow_inline_single_line: false,
 						is_known_multi_line: false,
 					});
@@ -961,9 +977,11 @@ impl<'a> Field<'a> {
 	}
 }
 
-/// The operands and operators of a binary chain, in source order.
-fn collect_binary<'a>(
+/// The operands and operators of a chain whose operators all bind equally tightly, in source
+/// order. A sub-expression whose operator binds differently is left as one operand.
+fn collect_chain<'a>(
 	expression: &'a Expression,
+	precedence: u8,
 	operands: &mut Vec<&'a Expression>,
 	operators: &mut Vec<&'static str>,
 ) {
@@ -973,12 +991,47 @@ fn collect_binary<'a>(
 			left,
 			right,
 			..
-		} => {
-			collect_binary(left, operands, operators);
+		} if precedence_of(operator) == precedence => {
+			// These operators are left associative, so a chain of one of them nests on the left.
+			collect_chain(left, precedence, operands, operators);
 			operators.push(binary_symbol(operator));
-			collect_binary(right, operands, operators);
+			operands.push(right);
 		}
 		_ => operands.push(expression),
+	}
+}
+
+/// Whether a multi-line operand may wrap where it stands, letting the chain around it stay on the
+/// line it started on.
+///
+/// An operand that is already a group of its own may not. Nested chain or parentheses, letting it
+/// wrap while the operator around it stays put reads as if that operator bound more tightly than
+/// it does: `a * b + c` followed by `* d` looks like `(a * b + c) * d`. Anything else — a call, a
+/// lambda, a match, a literal — hugs, so `values |> map(|x| {` stays on one line.
+fn wraps_in_place(operand: &Expression) -> bool {
+	!matches!(
+		operand,
+		Expression::Binary { .. } | Expression::Paren { .. }
+	)
+}
+
+/// How tightly an operator binds. Only equality between two operators is asked about, so the
+/// levels exist to group the operators rather than to be compared by magnitude.
+///
+/// Mirrors `binary_operator_precedence` in `lisette-syntax`'s Pratt parser. If that table
+/// changes, this one has to change with it or a chain is laid out with the wrong operator first.
+fn precedence_of(operator: &BinaryOperator) -> u8 {
+	use BinaryOperator::*;
+
+	match operator {
+		Pipeline => 1,
+		Or => 3,
+		And => 4,
+		Equal | NotEqual | LessThan | LessThanOrEqual | GreaterThan | GreaterThanOrEqual => 5,
+		Addition | Subtraction | BitwiseOr | BitwiseXor => 7,
+		Multiplication | Division | Remainder | ShiftLeft | ShiftRight | BitwiseAnd | BitwiseAndNot => {
+			8
+		}
 	}
 }
 

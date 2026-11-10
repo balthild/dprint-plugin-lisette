@@ -12,7 +12,15 @@ is no partial grouping: if one argument of a call has to break, they all do.
   angle brackets. `List<int, string>` and `call<int, string>(x)` put one type per line and
   no comma after the last one, because a trailing comma there is not valid Lisette.
 - The operands of a binary chain break *before* the operator, with one level of
-  continuation indent.
+  continuation indent. A chain is a run of operators that all bind equally tightly, so it
+  stops where an operator binds differently and that tighter pair keeps a line of its own:
+
+  ```lisette
+  let y = a * b
+    + c * d
+  ```
+
+  Breaking every operator at once would lose the shape of the expression.
 - Interfaces and `select` statements separate members with line breaks rather than commas,
   one member per line.
 - The methods of an `impl` block are always separated by a blank line.
@@ -36,6 +44,11 @@ do_work(arg1, arg2, |value| {
 
 on one opening line. The values that hug are lambdas, blocks, matches, tuples, struct
 literals and array literals.
+
+An operand of a chain hugs more widely: anything but a group of its own, i.e. a nested chain
+or a parenthesized expression. Letting one of those wrap while the operator around it stays
+put would read as if that operator bound more tightly than it does, so it breaks the chain
+instead.
 
 ## Imports
 

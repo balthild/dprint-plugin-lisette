@@ -1,10 +1,11 @@
 use dprint_core::formatting::bumpalo::collections::Vec as BumpVec;
 use dprint_core::formatting::*;
 use lisette_syntax::ast::{
-	BinaryOperator, Expression, IfLetAlternative, LetMode, Literal, MatchArm, Span,
-	StructFieldAssignment, StructSpread, UnaryOperator,
+	BinaryOperator, Expression, FormatStringPart, IfLetAlternative, LetMode, Literal, MatchArm,
+	SelectArm, Span, StructFieldAssignment, StructSpread, UnaryOperator,
 };
 
+use crate::generation::context::closing_brace_from;
 use crate::generation::{Context, ListOptions};
 
 impl<'a> Context<'a> {
@@ -214,15 +215,41 @@ impl<'a> Context<'a> {
 				items
 			}
 
-			Expression::Match { subject, arms, .. } => {
+			Expression::Match {
+				subject,
+				arms,
+				span,
+				..
+			} => {
 				let mut items = PrintItems::new(arena);
 				items.push_str("match ");
 				items.extend(self.expression(subject));
 				items.push_str(" {");
 				items.push_signal(Signal::NewLine);
-				items.extend(ir_helpers::with_indent(self.match_arms(arms)));
+				items.extend(ir_helpers::with_indent(self.match_arms(arms, *span)));
 				items.push_signal(Signal::NewLine);
 				items.push_str("}");
+				items
+			}
+
+			Expression::Select { arms, span, .. } => self.select(arms, *span),
+
+			Expression::ImplBlock {
+				annotation,
+				generics,
+				methods,
+				span,
+				..
+			} => self.impl_block(annotation, generics, methods, *span),
+
+			Expression::RawGo { text } => {
+				let mut items = PrintItems::new(arena);
+				items.push_str("@rawgo(\"");
+				items.extend(ir_helpers::gen_from_raw_string(
+					arena,
+					arena.bump().alloc_str(text),
+				));
+				items.push_str("\")");
 				items
 			}
 
@@ -424,8 +451,7 @@ impl<'a> Context<'a> {
 				}
 				body.push_signal(Signal::NewLine);
 				if split.has_blank_before_leading
-					|| (split.leading.is_none()
-						&& self.newline_count_between(end, item_span.byte_offset) >= 2)
+					|| (split.leading.is_none() && self.has_blank_line_between(end, item_span.byte_offset))
 				{
 					body.push_signal(Signal::NewLine);
 				}
@@ -569,22 +595,136 @@ impl<'a> Context<'a> {
 		result.items
 	}
 
-	fn match_arms(&mut self, arms: &'a [MatchArm]) -> PrintItems<'a> {
+	fn match_arms(&mut self, arms: &'a [MatchArm], span: Span) -> PrintItems<'a> {
+		self.join_braced_arms(
+			arms,
+			span.end(),
+			|arm| arm.pattern.get_span().byte_offset,
+			|arm| arm.expression.get_span().end(),
+			match_arm,
+		)
+	}
+
+	fn select(&mut self, arms: &'a [SelectArm], span: Span) -> PrintItems<'a> {
+		let arena = self.arena;
+		let mut items = PrintItems::new(arena);
+		items.push_str("select");
+
+		if arms.is_empty() {
+			items.push_str(" {}");
+			return items;
+		}
+
+		let source = self.source;
+		let end = span.end();
+		let body = self.join_braced_arms(
+			arms,
+			end,
+			select_arm_start,
+			|arm| select_arm_end(arm, source, end),
+			|context, arm| {
+				let mut items = context.select_arm(arm, end);
+				items.push_str(",");
+				items
+			},
+		);
+
+		items.push_str(" {");
+		items.push_signal(Signal::NewLine);
+		items.extend(ir_helpers::with_indent(body));
+		items.push_signal(Signal::NewLine);
+		items.push_str("}");
+		items
+	}
+
+	fn select_arm(&mut self, arm: &'a SelectArm, end: u32) -> PrintItems<'a> {
+		let arena = self.arena;
+		let mut items = PrintItems::new(arena);
+
+		match arm {
+			SelectArm::Receive {
+				binding,
+				receive_expression,
+				body,
+			} => {
+				items.push_str("let ");
+				items.extend(self.pattern(binding));
+				items.push_str(" = ");
+				items.extend(self.expression(receive_expression));
+				items.push_str(" => ");
+				items.extend(self.expression(body));
+			}
+			SelectArm::Send {
+				send_expression,
+				body,
+			} => {
+				items.extend(self.expression(send_expression));
+				items.push_str(" => ");
+				items.extend(self.expression(body));
+			}
+			SelectArm::MatchReceive {
+				receive_expression,
+				arms,
+			} => {
+				items.push_str("match ");
+				items.extend(self.expression(receive_expression));
+
+				if arms.is_empty() {
+					items.push_str(" {}");
+					return items;
+				}
+
+				let inner_end = arms
+					.last()
+					.map(|arm| closing_brace_from(self.source, arm.expression.get_span().end(), end))
+					.unwrap_or(end);
+
+				items.push_str(" {");
+				items.push_signal(Signal::NewLine);
+				items.extend(ir_helpers::with_indent(self.join_braced_arms(
+					arms,
+					inner_end,
+					|arm| arm.pattern.get_span().byte_offset,
+					|arm| arm.expression.get_span().end(),
+					match_arm,
+				)));
+				items.push_signal(Signal::NewLine);
+				items.push_str("}");
+			}
+			SelectArm::WildCard { body } => {
+				items.push_str("_ => ");
+				items.extend(self.expression(body));
+			}
+		}
+
+		items
+	}
+
+	/// Joins the arms of a braced construct, one per line, keeping the comments and blank lines
+	/// the author left between them.
+	fn join_braced_arms<T>(
+		&mut self,
+		arms: &'a [T],
+		body_end: u32,
+		start: impl Fn(&T) -> u32,
+		end: impl Fn(&T) -> u32,
+		mut format: impl FnMut(&mut Context<'a>, &'a T) -> PrintItems<'a>,
+	) -> PrintItems<'a> {
 		let mut items = PrintItems::new(self.arena);
 		let mut previous_end = None;
 
 		for arm in arms {
-			let start = arm.pattern.get_span().byte_offset;
+			let start = start(arm);
 			let split = self.comments.take_split_after_previous(previous_end, start);
 
-			if let Some(end) = previous_end {
+			if let Some(previous_end) = previous_end {
 				if let Some(trailing) = split.trailing {
 					items.push_space();
 					items.extend(trailing);
 				}
 				items.push_signal(Signal::NewLine);
 				if split.has_blank_before_leading
-					|| (split.leading.is_none() && self.newline_count_between(end, start) >= 2)
+					|| (split.leading.is_none() && self.has_blank_line_between(previous_end, start))
 				{
 					items.push_signal(Signal::NewLine);
 				}
@@ -593,19 +733,63 @@ impl<'a> Context<'a> {
 				items.extend(leading);
 			}
 
-			items.extend(self.pattern(&arm.pattern));
-			if let Some(guard) = &arm.guard {
-				items.push_str(" if ");
-				items.extend(self.expression(guard));
-			}
-			items.push_str(" => ");
-			items.extend(self.expression(&arm.expression));
-			items.push_str(",");
+			items.extend(format(self, arm));
+			previous_end = Some(end(arm));
+		}
 
-			previous_end = Some(arm.expression.get_span().end());
+		let split = self
+			.comments
+			.take_split_after_previous(previous_end, body_end);
+		if let Some(trailing) = split.trailing {
+			items.push_space();
+			items.extend(trailing);
+		}
+		if let Some(leading) = split.leading {
+			if !items.is_empty() {
+				items.push_signal(Signal::NewLine);
+			}
+			items.extend(leading);
 		}
 
 		items
+	}
+}
+
+fn match_arm<'a>(context: &mut Context<'a>, arm: &'a MatchArm) -> PrintItems<'a> {
+	let mut items = context.pattern(&arm.pattern);
+	if let Some(guard) = &arm.guard {
+		items.push_str(" if ");
+		items.extend(context.expression(guard));
+	}
+	items.push_str(" => ");
+	items.extend(context.expression(&arm.expression));
+	items.push_str(",");
+	items
+}
+
+fn select_arm_start(arm: &SelectArm) -> u32 {
+	match arm {
+		SelectArm::Receive { binding, .. } => binding.get_span().byte_offset,
+		SelectArm::Send {
+			send_expression, ..
+		} => send_expression.get_span().byte_offset,
+		SelectArm::MatchReceive {
+			receive_expression, ..
+		} => receive_expression.get_span().byte_offset,
+		SelectArm::WildCard { body } => body.get_span().byte_offset,
+	}
+}
+
+fn select_arm_end(arm: &SelectArm, source: &str, before: u32) -> u32 {
+	match arm {
+		SelectArm::Receive { body, .. }
+		| SelectArm::Send { body, .. }
+		| SelectArm::WildCard { body } => body.get_span().end(),
+		SelectArm::MatchReceive { arms, .. } => {
+			let last = arms.last().map_or(0, |arm| arm.expression.get_span().end());
+
+			closing_brace_from(source, last, before)
+		}
 	}
 }
 
@@ -673,11 +857,41 @@ impl<'a> Context<'a> {
 					|context, element| context.expression(element).into_rc_path(),
 				)
 			}
-			Literal::FormatString(_) => {
+			Literal::FormatString(parts) => {
+				let mut items = PrintItems::new(arena);
+				items.push_str("f\"");
+
+				for part in parts {
+					match part {
+						FormatStringPart::Text(text) => {
+							let text = arena.bump().alloc_str(text);
+							items.extend(ir_helpers::gen_from_raw_string(arena, text));
+						}
+						FormatStringPart::Expression(expression) => {
+							items.push_str("{");
+							items.extend(self.format_string_interpolation(expression));
+							items.push_str("}");
+						}
+					}
+				}
+
+				items.push_str("\"");
 				self.comments.mark_handled_before(span.end());
-				self.verbatim(span.byte_offset, span.end())
+				items
 			}
 		}
+	}
+
+	/// An interpolation is kept on one line, unless it is written over several lines, where
+	/// flattening it could swallow a line break that is part of a string.
+	fn format_string_interpolation(&mut self, expression: &'a Expression) -> PrintItems<'a> {
+		let span = expression.get_span();
+		if self.has_line_break_between(span.byte_offset, span.end()) {
+			self.comments.mark_handled_before(span.end());
+			return self.verbatim(span.byte_offset, span.end());
+		}
+
+		ir_helpers::with_no_new_lines(self.expression(expression))
 	}
 }
 

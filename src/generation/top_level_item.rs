@@ -1,7 +1,8 @@
 use dprint_core::formatting::*;
 use lisette_syntax::ast::{
-	Attribute, Binding, ConstInitializer, EnumFieldDefinition, EnumVariant, Expression, FunctionBody,
-	Generic, ImportAlias, ParentInterface, StructFieldDefinition, StructFields, VariantFields,
+	Annotation, Attribute, Binding, ConstInitializer, EnumFieldDefinition, EnumVariant, Expression,
+	FunctionBody, Generic, ImportAlias, ParentInterface, Span, StructFieldDefinition, StructFields,
+	VariantFields,
 };
 
 use crate::generation::{Context, ListOptions};
@@ -21,9 +22,12 @@ impl<'a> Context<'a> {
 			let span = item.get_span();
 			let leading_edge = leading_edge(item);
 			let doc_comments = self.comments.take_doc_comments_before(leading_edge);
-			let split = self
-				.comments
-				.take_split_after_previous(previous_end, leading_edge);
+			let split = match previous_end {
+				Some(previous_end) => self
+					.comments
+					.take_split_after_previous(Some(previous_end), leading_edge),
+				None => self.comments.take_header_split(leading_edge),
+			};
 
 			if let Some(previous) = records.last_mut() {
 				previous.trailing = split.trailing;
@@ -220,9 +224,16 @@ impl<'a> Context<'a> {
 				generics,
 				parents,
 				method_signatures,
+				..
+			} => self.interface(name, generics, parents, method_signatures),
+
+			Expression::ImplBlock {
+				annotation,
+				generics,
+				methods,
 				span,
 				..
-			} => self.interface(name, generics, parents, method_signatures, span.byte_offset),
+			} => self.impl_block(annotation, generics, methods, *span),
 
 			Expression::Const {
 				identifier,
@@ -471,7 +482,6 @@ impl<'a> Context<'a> {
 		generics: &'a [Generic],
 		parents: &'a [ParentInterface],
 		methods: &'a [Expression],
-		start: u32,
 	) -> PrintItems<'a> {
 		let arena = self.arena;
 		let mut items = PrintItems::new(arena);
@@ -513,7 +523,80 @@ impl<'a> Context<'a> {
 			body.extend(self.method_signature(method));
 			wrote_any = true;
 		}
-		let _ = start;
+
+		items.push_str(" {");
+		items.push_signal(Signal::NewLine);
+		items.extend(ir_helpers::with_indent(body));
+		items.push_signal(Signal::NewLine);
+		items.push_str("}");
+		items
+	}
+
+	/// Methods are always separated by a blank line, whatever the source does.
+	pub(crate) fn impl_block(
+		&mut self,
+		annotation: &'a Annotation,
+		generics: &'a [Generic],
+		methods: &'a [Expression],
+		span: Span,
+	) -> PrintItems<'a> {
+		let arena = self.arena;
+		let mut items = PrintItems::new(arena);
+		items.push_str("impl");
+		items.extend(self.generics(generics));
+		items.push_str(" ");
+		items.extend(self.annotation(annotation));
+
+		if methods.is_empty() {
+			items.push_str(" {}");
+			return items;
+		}
+
+		let mut body = PrintItems::new(arena);
+		let mut previous_end = None;
+		for method in methods {
+			let method_span = method.get_span();
+			let edge = leading_edge(method);
+			let doc_comments = self.comments.take_doc_comments_before(edge);
+			let split = self.comments.take_split_after_previous(previous_end, edge);
+
+			if previous_end.is_some() {
+				if let Some(trailing) = split.trailing {
+					body.push_space();
+					body.extend(trailing);
+				}
+				body.push_signal(Signal::NewLine);
+				body.push_signal(Signal::NewLine);
+			}
+			if let Some(doc_comments) = doc_comments {
+				body.extend(doc_comments);
+				body.push_signal(Signal::NewLine);
+			}
+			if let Some(leading) = split.leading {
+				body.extend(leading);
+			}
+
+			body.extend(self.attributes(method));
+			if is_public(method) {
+				body.push_str("pub ");
+			}
+			body.extend(self.definition(method));
+			self.comments.mark_handled_before(method_span.end());
+
+			previous_end = Some(method_span.end());
+		}
+
+		let split = self
+			.comments
+			.take_split_after_previous(previous_end, span.end());
+		if let Some(trailing) = split.trailing {
+			body.push_space();
+			body.extend(trailing);
+		}
+		if let Some(leading) = split.leading {
+			body.push_signal(Signal::NewLine);
+			body.extend(leading);
+		}
 
 		items.push_str(" {");
 		items.push_signal(Signal::NewLine);

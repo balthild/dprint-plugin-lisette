@@ -141,19 +141,28 @@ impl<'a> Comments<'a> {
 		};
 		let (trailing, leading) = events.split_at(split_at);
 
-		// With no previous item, comments detached from the first one by a blank line are a
-		// file header rather than something that travels with it.
-		let (header, leading) = if previous_end.is_none() {
-			let at = leading
-				.iter()
-				.rposition(|event| matches!(event, Event::BlankLine(_)))
-				.map_or(0, |index| index + 1);
+		self.build_split(&[], trailing, leading)
+	}
 
-			leading.split_at(at)
-		} else {
-			(&[][..], leading)
-		};
+	/// The same, for the first item of a file: comments detached from it by a blank line are a
+	/// file header that stays at the top rather than travelling with the item.
+	pub(crate) fn take_header_split(&mut self, before: u32) -> Split<'a> {
+		let events = self.take_events_before(before);
+		let split_at = events
+			.iter()
+			.rposition(|event| matches!(event, Event::BlankLine(_)))
+			.map_or(0, |index| index + 1);
+		let (header, leading) = events.split_at(split_at);
 
+		self.build_split(header, &[], leading)
+	}
+
+	fn build_split(
+		&self,
+		header: &[Event<'a>],
+		trailing: &[Event<'a>],
+		leading: &[Event<'a>],
+	) -> Split<'a> {
 		Split {
 			header: self.to_items(header),
 			trailing: self.to_items(trailing),
@@ -347,6 +356,28 @@ mod tests {
 
 		assert_eq!(render(split.trailing), "");
 		assert_eq!(render(split.leading), "// leading\n");
+	}
+
+	#[test]
+	fn keeps_every_comment_before_a_nested_first_item() {
+		let source = "// detached\n\n// attached\nlet x = 1\n";
+		let arena = Arena::new();
+		let mut comments = new_comments(&arena, source);
+		let split = comments.take_split_after_previous(None, 25);
+
+		assert_eq!(render(split.header), "");
+		assert_eq!(render(split.leading), "// detached\n\n// attached\n");
+	}
+
+	#[test]
+	fn takes_a_detached_file_header() {
+		let source = "// header\n\nimport \"a\"\n";
+		let arena = Arena::new();
+		let mut comments = new_comments(&arena, source);
+		let split = comments.take_header_split(11);
+
+		assert_eq!(render(split.header), "// header\n");
+		assert_eq!(render(split.leading), "");
 	}
 
 	#[test]

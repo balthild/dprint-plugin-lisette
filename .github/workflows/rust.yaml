@@ -1,0 +1,35 @@
+name: Rust
+
+on:
+  push:
+    paths:
+    - 'src/**'
+    - 'Cargo.toml'
+    - 'Cargo.lock'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v7
+
+    - name: Toolchain
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        targets: wasm32-unknown-unknown
+
+    - name: Build
+      run: cargo build --target=wasm32-unknown-unknown --release
+
+    - name: Release
+      uses: softprops/action-gh-release@v3
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: ./target/wasm32-unknown-unknown/release/plugin.wasm

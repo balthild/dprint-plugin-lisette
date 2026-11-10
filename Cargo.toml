@@ -2,8 +2,14 @@
 name = "dprint-plugin-lisette"
 version = "0.1.0"
 edition = "2024"
+license = "MPL-2.0"
+authors = ["Balthild <ibalthild@gmail.com>"]
+keywords = ["import", "formatter", "typescript", "javascript"]
+description = "Lisette formatter plugin for dprint."
+repository = "https://github.com/balthild/dprint-plugin-lisette"
 
 [lib]
+name = "plugin"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
